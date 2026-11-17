@@ -1,4 +1,5 @@
-// GET /api/ledger
+// GET /api/ledger        cached for up to 5 minutes (normal page loads)
+// GET /api/ledger-fresh  read from Notion right now (the page's Refresh button)
 // Reads the Delivery Promises database in Notion and returns the client ledger as JSON.
 //
 // Safety: only rows with "Show on ledger" ticked are returned, and only the fields
@@ -96,7 +97,8 @@ export function buildLedger(pages) {
   return { updated, ours, theirs };
 }
 
-export default async () => {
+export default async (req) => {
+  const fresh = new URL(req.url).pathname.endsWith("/ledger-fresh");
   const token = process.env.NOTION_TOKEN;
   const dataSourceId = process.env.NOTION_DATA_SOURCE_ID;
   if (!token || !dataSourceId) {
@@ -106,9 +108,13 @@ export default async () => {
   try {
     const ledger = buildLedger(await queryAll(token, dataSourceId));
     return Response.json(ledger, {
-      headers: {
-        // Browsers re-check every minute; Netlify's CDN serves a cached copy for up to 5 minutes,
-        // and keeps serving the last good copy for a day if Notion is briefly unreachable.
+      headers: fresh ? {
+        // Refresh button: read Notion now and never cache this copy.
+        "Cache-Control": "no-store",
+        "X-Robots-Tag": "noindex"
+      } : {
+        // Normal visits: browsers re-check every minute; Netlify's CDN serves a cached copy for up
+        // to 5 minutes, and keeps serving the last good copy for a day if Notion is briefly unreachable.
         "Cache-Control": "public, max-age=60",
         "Netlify-CDN-Cache-Control": "public, durable, s-maxage=300, stale-while-revalidate=86400",
         "X-Robots-Tag": "noindex"
@@ -127,4 +133,4 @@ export default async () => {
   }
 };
 
-export const config = { path: "/api/ledger" };
+export const config = { path: ["/api/ledger", "/api/ledger-fresh"] };
