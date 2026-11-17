@@ -71,8 +71,11 @@ async function queryAll(token, dataSourceId) {
       })
     });
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Notion ${res.status}: ${body.slice(0, 300)}`);
+      let detail = {};
+      try { detail = await res.json(); } catch (e) {}
+      const err = new Error(`Notion ${res.status}: ${detail.code || ""} ${detail.message || ""}`);
+      err.notion = { status: res.status, code: detail.code || null, message: detail.message || null };
+      throw err;
     }
     const json = await res.json();
     pages.push(...json.results);
@@ -113,7 +116,14 @@ export default async () => {
     });
   } catch (err) {
     console.error(err);
-    return Response.json({ error: "Could not load the ledger." }, { status: 502, headers: { "Cache-Control": "no-store" } });
+    // Diagnostic detail for setup problems. Never includes the token: for Notion errors it's
+    // Notion's own status, code and message; for anything else, only the kind of error.
+    const diagnostic = err.notion
+      ? { notion_status: err.notion.status, notion_code: err.notion.code, notion_message: err.notion.message }
+      : { problem: err.name === "TypeError" && /header|ByteString/i.test(err.message)
+            ? "NOTION_TOKEN contains characters that can't be sent (a space, line break, quote mark or the wrong text). Paste the token again."
+            : err.name };
+    return Response.json({ error: "Could not load the ledger.", ...diagnostic }, { status: 502, headers: { "Cache-Control": "no-store" } });
   }
 };
 
