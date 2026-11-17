@@ -76,7 +76,18 @@
     font: inherit; font-size: 13.5px; font-weight: 600; color: var(--navy);
     background: var(--surface); border: 1px solid var(--rule); border-radius: 999px; padding: 7px 14px 7px 11px;
   }
-  .theme-toggle:hover { border-color: var(--navy); }
+  .theme-toggle:hover, .refresh:hover:not(:disabled) { border-color: var(--navy); }
+  .refresh {
+    appearance: none; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; margin-top: 10px;
+    font: inherit; font-size: 13px; font-weight: 600; color: var(--navy);
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 999px; padding: 5px 12px 5px 10px;
+  }
+  .refresh:focus-visible { outline: 2px solid var(--magenta); outline-offset: 2px; }
+  .refresh:disabled { cursor: progress; opacity: .7; }
+  .refresh.spinning svg { animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .refresh.spinning svg { animation: none; } }
+  .refresh-note { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); min-height: 1em; }
   .theme-toggle:focus-visible { outline: 2px solid var(--magenta); outline-offset: 2px; }
   .theme-toggle .icon-sun { display: none; }
   :root[data-theme="dark"] .theme-toggle .icon-sun { display: block; }
@@ -240,7 +251,13 @@
         <h1>JustPressOne delivery ledger</h1>
         <p>Every commitment in our agreements with JustPressOne, an honest read on where each one stands, and what comes next. Updated continuously, as set out in Retainer section 2.</p>
       </div>
-      <div class="updated" id="updated-wrap" hidden>Last updated<strong id="updated"></strong></div>
+      <div class="updated" id="updated-wrap" hidden>Last updated<strong id="updated"></strong>
+        <button class="refresh" id="refresh" type="button">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span id="refresh-label">Refresh</span>
+        </button>
+        <span class="refresh-note" id="refresh-note" aria-live="polite"></span>
+      </div>
     </div>
   </div>
 </header>
@@ -511,8 +528,8 @@ function renderOverview() {
   const concerned = active.filter(i => i.signal === "concerned").sort(byStatusThenDate);
   if (concerned.length) {
     const unknownHead = document.getElementById("unknown").previousElementSibling;
-    const head = el("p", "subhead", "Your team has told us they’re concerned");
-    const ul = el("ul", "items");
+    const head = el("p", "subhead concerned-block", "Your team has told us they’re concerned");
+    const ul = el("ul", "items concerned-block");
     concerned.forEach(i => ul.append(renderItem(i, { meta: true, side: names[i.a] })));
     unknownHead.before(head, ul);
   }
@@ -569,20 +586,14 @@ toggle.addEventListener("click", () => {
 const panels = [...document.querySelectorAll('[role="tabpanel"]')];
 panels.forEach(p => p.hidden = true);
 
-async function boot() {
-  const notice = document.getElementById("notice");
-  try {
-    const res = await fetch("/api/ledger", { headers: { accept: "application/json" } });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
-    LEDGER = { agreements: AGREEMENTS, ours: data.ours || [], theirs: data.theirs || [], updated: data.updated };
-  } catch (e) {
-    notice.classList.add("error");
-    notice.textContent = "We couldn’t load the latest ledger just now. Please refresh in a minute, or contact Gladys or Eli at EmergePH.";
-    console.error(e);
-    return;
-  }
-  notice.hidden = true;
+function clearRendered() {
+  ["status-legend", "tiles", "attention", "meter", "legend", "unknown"].forEach(id => document.getElementById(id).replaceChildren());
+  document.querySelectorAll(".concerned-block").forEach(n => n.remove());
+  document.querySelectorAll("[data-key], [data-columns]").forEach(n => n.replaceChildren());
+}
+
+function renderAll() {
+  clearRendered();
   document.getElementById("updated-wrap").hidden = false;
   document.getElementById("updated").textContent = LEDGER.updated ? fmt(LEDGER.updated, true) : "Today";
   document.getElementById("count-emergeph").textContent = LEDGER.ours.length;
@@ -592,8 +603,56 @@ async function boot() {
   renderKey("theirs", "of JustPressOne’s");
   renderColumns("ours");
   renderColumns("theirs");
+}
+
+async function fetchLedger(fresh) {
+  const res = await fetch(fresh ? "/api/ledger-fresh" : "/api/ledger",
+    { headers: { accept: "application/json" }, cache: fresh ? "no-store" : "default" });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  LEDGER = { agreements: AGREEMENTS, ours: data.ours || [], theirs: data.theirs || [], updated: data.updated };
+}
+
+const timeNow = () => new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+
+async function boot() {
+  const notice = document.getElementById("notice");
+  try {
+    await fetchLedger(false);
+  } catch (e) {
+    notice.classList.add("error");
+    notice.textContent = "We couldn’t load the latest ledger just now. Please refresh in a minute, or contact Gladys or Eli at EmergePH.";
+    console.error(e);
+    return;
+  }
+  notice.hidden = true;
+  renderAll();
   show(location.hash.slice(1));
 }
+
+/* Refresh button: reads Notion directly, skipping the 5-minute cache */
+const refreshBtn = document.getElementById("refresh");
+refreshBtn.addEventListener("click", async () => {
+  const note = document.getElementById("refresh-note");
+  const current = tabs.find(t => t.getAttribute("aria-selected") === "true");
+  refreshBtn.disabled = true;
+  refreshBtn.classList.add("spinning");
+  document.getElementById("refresh-label").textContent = "Refreshing…";
+  try {
+    await fetchLedger(true);
+    renderAll();
+    show(current ? current.dataset.view : location.hash.slice(1));
+    note.textContent = "Up to date as of " + timeNow();
+  } catch (e) {
+    console.error(e);
+    note.textContent = "Couldn’t refresh. Try again in a moment.";
+  } finally {
+    refreshBtn.disabled = false;
+    refreshBtn.classList.remove("spinning");
+    document.getElementById("refresh-label").textContent = "Refresh";
+  }
+});
+
 boot();
 </script>
 </body>
