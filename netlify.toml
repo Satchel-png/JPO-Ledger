@@ -1,0 +1,10 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+# Link-only site: keep every page out of search engines
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
+    Referrer-Policy = "no-referrer"

@@ -1,0 +1,6 @@
+{
+  "name": "jpo-delivery-ledger",
+  "private": true,
+  "type": "module",
+  "description": "Client-facing JPO delivery ledger, read live from the Notion JPO Delivery Dashboard"
+}
